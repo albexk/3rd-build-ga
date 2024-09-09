@@ -1,0 +1,95 @@
+name: android-hev-socks5
+
+on: [push]
+
+jobs:
+
+  Build-Libs-HevSocks5-Android:
+    name: 'Build-Libs-HevSocks5-Android'
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.message, '[all]') ||
+      contains(github.event.head_commit.message, '[android]') ||
+      contains(github.event.head_commit.message, '[android-hev-socks5]') ||
+      contains(github.event.head_commit.message, '[hev-socks5]')
+
+    env:
+      PKGNAME: 'org/amnezia/vpn/hevsocks5'
+
+    steps:
+
+    - name: 'Setup Java'
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'temurin'
+        java-version: '17'
+
+    - name: 'Setup Android NDK'
+      id: setup-ndk
+      uses: nttld/setup-ndk@v1
+      with:
+        ndk-version: 'r26b'
+
+    - name: 'Get sources'
+      uses: actions/checkout@v4
+
+    - name: 'Get HevSocks5'
+      uses: actions/checkout@v4
+      with:
+        repository: heiher/hev-socks5-tunnel
+        ref: '2.7.4'
+        path: jni
+        submodules: true
+
+    - name: 'Add mk-files'
+      run: |
+        cat <<EOF > Android.mk
+        include \$(call all-subdir-makefiles)
+        EOF
+        
+        cat <<EOF > Application.mk
+        APP_OPTIM := release
+        APP_PLATFORM := android-24
+        APP_ABI := armeabi-v7a arm64-v8a x86 x86_64
+        APP_CFLAGS := -O3 -DPKGNAME=${{ env.PKGNAME }}
+        APP_CPPFLAGS := -O3 -std=c++11
+        NDK_TOOLCHAIN_VERSION := clang
+        EOF
+
+    - name: 'Build HevSocks5 binaries'
+      run: |
+        ndk-build APP_BUILD_SCRIPT=${{ github.workspace }}/Android.mk NDK_APPLICATION_MK=${{ github.workspace }}/Application.mk
+
+    - name: 'Archive artifacts'
+      uses: actions/upload-artifact@v4
+      with:
+        name: hev-socks5-android
+        path: libs/*
+
+  github-release:
+    name: GitHub Release
+    needs: Build-Libs-HevSocks5-Android
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/')
+
+    steps:
+    - name: Setup | Checkout
+      uses: actions/checkout@v4
+
+    - name: Setup | Artifacts
+      uses: actions/download-artifact@v4
+
+    - name: Setup | Checksums
+      run: for file in $(find ./ -name '*.so' ); do openssl dgst -sha256 -r "$file" | awk '{print $1}' > "${file}.sha256"; done
+
+    - name: Zip ALL
+      run: for file in *; do zip -r ${file%.*}.zip  $file; done
+
+    - name: Upload binaries to release
+      uses: svenstaro/upload-release-action@v2
+      with:
+        repo_token: ${{ secrets.GITHUB_TOKEN }}
+        file: hev-socks5-android.zip
+        tag: ${{ github.ref }}
+        overwrite: true
+        file_glob: true
